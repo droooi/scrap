@@ -1,0 +1,46 @@
+#!/bin/bash
+
+if [ ${1:-normal} = "--help" ]; then
+  echo rename2 昔mac osXにrenameが無かった時に作った
+  echo 注意 カレントディレクトリの全ファイルが対象
+  echo -----------------------
+  echo Example
+  echo rename2 pattern_str replace_str {opt}
+  echo "opt:all (全一致)"
+  echo ls => abc.sh xxx.c zzabcd.js
+  echo rename2 abc def
+  echo abc.sh => def.sh
+  echo zzabcd.js => zzdefd.js
+  echo rename abc def *と同じ事...
+  echo ls => abcabc.sh xxxabcxxxabc.c zzabcdeexx.js
+  echo rename2 abc XXX all
+  echo abcabc.sh => XXXXXX.sh
+  echo xxxabcxxxabc.c => xxxXXXxxxXXX.c
+  echo zzabcdeexx.js => zzXXXdeexx.js
+  echo 一致箇所全部変更(独自機能)
+  exit
+fi
+
+if [ -n $1 ]; then
+
+ for i in `ls *$1*`; do
+  if [ ${3:-normal} = all ]; then
+   if mv $i ${i//$1/$2}; then
+    echo $i "=>" ${i//$1/$2};
+   else
+    echo "failed"
+   fi
+  else
+   if mv $i ${i/$1/$2}; then
+    echo $i "=>" ${i/$1/$2};
+   else
+    echo "failed"
+   fi
+  fi
+ done;
+
+else
+
+ echo "invalid"
+
+fi

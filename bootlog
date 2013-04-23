@@ -1,0 +1,110 @@
+#!/bin/bash
+#
+#    :::
+#   :: OSX BOOT LOGGER  v.1.0.0
+# :::::::::::::::::::::::::::::::::::::::::::
+#   :::::::::::::::::::::::::: 2008.09.09
+#    ::: launchDaemon
+#
+#
+# --概要--
+# Pマーク対応
+# 起動/シャットダウンを/var/log/bootmac/以下にログファイル保存
+# daemondoが必要です
+# INSTALL
+#  /usr/local/bin/等に実行権限を付けたbootlogコマンドをコピー
+#  下記起動ファイルを/Library/LaunchDaemons/org.scrap.bootlog.plistとして保存
+#
+#<?xml version="1.0" encoding="UTF-8"?>
+#<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+#<plist version="1.0">
+#<dict>
+#       <key>Label</key>
+#       <string>org.scrap.bootlog</string>
+#       <key>ProgramArguments</key>
+#       <array>
+#               <string>/opt/local/bin/daemondo</string>
+#               <string>--label=bootlog</string>
+#               <string>--start-cmd</string>
+#               <string>/usr/local/bin/bootlog</string>
+#               <string>-s</string>
+#               <string>;</string>
+#               <string>--stop-cmd</string>
+#               <string>/usr/local/bin/bootlog</string>
+#               <string>-d</string>
+#               <string>;</string>
+#               <string>--pid=none</string>
+#       </array>
+#       <key>RunAtLoad</key>
+#       <true/>
+#</dict>
+#</plist>
+#
+# 起動設定
+# launchctl unload org.scrap.bootlog.plist
+# launchctl load   org.scrap.bootlog.plist
+# launchctl start  org.scrap.bootlog.plist
+# USER変数に自分のユーザー名に書き換えておく
+
+function bootlog_exec() {
+    if [ -z $TYPE ];then
+	TYPE=s;
+    fi
+    
+    USER="yourname"
+    YEAR=`date +%y`
+    MM=`date +%m`
+    DD=`date +%d`
+    HH=`date +%H`
+    II=`date +%M`
+    YMD="${YEAR}/${MM}/${DD} ${HH}:${II}"
+    YM="${YEAR}${MM}"
+    YYYYMM=`date +%Y%m`
+    LOG_DIR="/var/log/bootmac/${YYYYMM}"
+
+    if [ -d $LOG_DIR ]; then
+     echo "exists";
+    else
+      mkdir ${LOG_DIR};
+    fi
+    
+    if [ -z $LOGFILE ];then
+     LOGFILE="${LOG_DIR}/${USER}_${YM}.log"
+    fi
+    
+    if [ $TYPE = "s" ];then
+	echo "[S] $YMD" >> $LOGFILE;
+    else
+	echo "[D] $YMD" >> $LOGFILE;
+    fi    
+}
+
+
+
+#show help
+function printHelp(){
+    printf 'usage:
+bootlog.sh [-s | -d]
+options:
+  -s: write at boot
+  -d: write at shutdown
+  -h: help
+'
+}
+
+##main
+renice +20 $$ > /dev/null
+while getopts ":hsdf:" opt; do
+    case $opt in
+        h  ) printHelp;
+            exit;;
+        s  ) TYPE="s";;
+        d  ) TYPE="d";;
+        f  ) LOGFILE=$OPTARG ;;
+        \? ) echo "iilegal option $1"; printHelp; exit 1 ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+##Exec
+bootlog_exec

@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [ ${1:-normal} = "--help" ]; then
+  echo ''
+  echo 'dusting '
+  echo 'emacsのゴミファイル削除するだけ'
+  echo '======================='
+  echo 'delete current files as (*~ , #*)'
+  echo "option: -r  recursive"
+  exit
+fi
+
+if [ ${1:-normal} = "-r" ]; then
+  find . -name \*~ -print0 | xargs -0 rm
+  find . -name \#\* -print0 | xargs -0 rm
+else
+  for i in `ls | grep '~$'`;do rm $i;done
+  for i in `ls | grep '^#'`;do rm $i;done
+fi
