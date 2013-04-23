@@ -1,0 +1,250 @@
+#!/bin/bash
+#
+#    :::
+#   :: MYSQL SLAVE DATA BACKUPPER v.1.0.1
+# :::::::::::::::::::::::::::::::::::::::::::
+#   :::::::::::::::::::::::::: 2007.11.19
+#    :::
+#
+#
+# --概要--
+#  MysqlのスレーブDBにてmysqldumpを用いたバックアップを行います。
+#  dumpするのは月曜日のみ、他はflash-logs
+#  複数DBをdump中はslaveを停止して実行します
+#  保存するファイル 各DB毎dumpファイル/{hostname}-relay-bin.*,master.info,relay-log.infoすべて
+#  外部ファイルサーバ等にファイルを転送する機能はありません
+# 
+#  保存タイプは２種類
+#   monday   : dump & flash-logs
+#   other    : flash-logs
+#
+#  保存ファイル名 
+#   {backup-dir}/yyyy/mm/dump/{dbname}_ddhhii.tgz ({dbname}.sql)
+#   {backup-dir}/yyyy/mm/log/ddhhii.tgz (dump直前のrelay-bin)
+#   dumpファイルは大きいため、ローテートは考慮する
+#
+#  変数 MYSQL_*を適宜設定してご利用ください。
+#
+#  cronでの設定例 dbはappleとorangeが対象
+#  0 3 * * * /root/bin/mysql_backup.sh -dapple,orange > /dev/null 2>&1
+#
+# INSTAL
+# MySQLのアカウント等変数を環境に合わせて修正
+# rootで実行 /root/bin/等に実行権限を付けて保存
+# crontabで上記例のように設定
+#
+# 既知の問題
+# 古い レプリケーションの遅延は考慮していない。 semisync付けておけば問題は無い。更新が多すぎる場合binlogが1GB超えてバックアップ前に勝手にインクリメントされる。
+# Slaveはバックアップ実行中にSTOP SLAVEさせるため、参照されないバックアップ専用のものを使うか、バックアップ中はアプリ側で参照しないようにする事
+
+VERSION="1.0.1"
+
+# |||||||||||||||||||| START CONFIGURATION SECTION  ||||||||||||||||||||
+# --------------------                              --------------------
+#this server's hostname
+HOSTNAME=`hostname`
+# set your email スペース区切りで複数可能
+SYSEMAIL="a@example.com"
+# save directory
+TARGET=/var/mysql_backup/
+# tar command path
+Tar=/bin/tar
+# sendmail command path
+SENDMAIL=/usr/sbin/sendmail
+# rsync command path
+RSYNC=/usr/bin/rsync
+# date
+YEAR=`date +%y`
+MM=`date +%m`
+DD=`date +%d`
+HI=`date +%H%M`
+YMDHI=`date +%y%m%d%H%M`
+
+# set mysql config
+MYSQL_BIN=/usr/bin/
+MYSQL_DATA_DIR=/var/lib/mysql/
+MYSQL_USER=root
+MYSQL_HOST=localhost
+MYSQL_PASS=password
+MYSQL_CHARSET=utf8
+
+# set relay-log.info fullpath
+RELAYLOG_INFO=${MYSQL_DATA_DIR}relay-log.info
+
+if [ -z $MYSQL_USER ];then
+ MYSQL_USER='root'
+fi
+
+if [ -z $MYSQL_PASS ];then
+ MYSQL_PASS=''
+fi
+
+if [ -z $MYSQL_HOST ];then
+ MYSQL_HOST='localhost'
+fi
+
+iam=`id -u`
+
+if [ ${iam} -ne 0 ]
+then
+    echo "Run by root."
+    exit 2
+fi
+
+
+# --------------------                              --------------------
+# ||||||||||||||||||||   END CONFIGURATION SECTION  ||||||||||||||||||||
+
+
+#show env for debug mode
+function printValues() {
+ printf "debug info...
+  DATABASE=$DATABASES
+  TARGET=$TARGET
+  TAR=$Tar
+  RSYNC=$RSYNC
+  YEAR=$YEAR
+  HI=$HI
+  YMDHI=$YMDHI
+  RELAYLOG_INFO=$RELAYLOG_INFO
+  MYSQL_BIN=$MYSQL_BIN
+  MYSQL_DATA_DIR=$MYSQL_DATA_DIR
+"
+ exit;
+}
+
+#show version
+function printVersion() {
+ printf "
+mysql_backup.sh(mysql data backup) $VERSION
+Author 001@dropsystem
+Copyright (C) 2007 Dropsystem Co.,Ltd.
+"
+}
+
+#show help 
+function printHelp(){
+    printf 'usage: 
+ mysql_backupb.sh [-t save dir] [-d save databases] [-h] [-v] [-z]
+ generally, crontab is used. 
+    0 3 * * * mysql_backup.sh -t /var/backup -d god,pitagoras
+options:
+  -t: set save directory default $TARGET
+  -d: set save target (database name) , split
+  -v: show version
+  -h: help
+  -z: show env
+'
+}
+
+#set filename
+function setFileName(){
+  TARGET="${TARGET%/}/${YEAR}/${MM}/"
+}
+
+#execute backup
+function backup_exec() {
+    # set 
+    setFileName
+    
+    if [ -z $TARGET ];then
+	echo "TARGET is not set."
+	exit
+    fi
+    
+    if [ ! -d "${TARGET}/{dump,log}" ]; then
+	mkdir -p ${TARGET}/{dump,log}
+    fi
+    
+
+    ## STOP SLAVE
+    ${MYSQL_BIN}mysql --user=$MYSQL_USER --host=$MYSQL_HOST --password=$MYSQL_PASS -e 'STOP SLAVE;'
+
+    RELAYLOG_INFO=${MYSQL_DATA_DIR}relay-log.info
+    RELAY_LOG_BIN=$(basename `less $RELAYLOG_INFO | head -1`)
+    LOG_POSITION=$(basename `less $RELAYLOG_INFO | head -1` | cut -d '.' -f2)
+
+    if [ -z $RELAY_LOG_BIN ];then
+       echo  "relay-log-bin not found"
+       exit
+    fi
+
+    ## copy latest relay-bin
+    cd ${MYSQL_DATA_DIR} && $Tar zcpf ${TARGET}/log/${LOG_POSITION}.tgz $RELAY_LOG_BIN
+
+    ## flash-logs
+    ${MYSQL_BIN}mysqladmin --user=$MYSQL_USER --host=$MYSQL_HOST --password=$MYSQL_PASS flush-logs
+
+    ## 月曜日はdumpも行う
+    day=`date +%w`
+
+    if [ $day = 1 ];then
+      IFS=','
+      for DB in $DATABASES;
+      do
+      ${MYSQL_BIN}mysqldump --user=$MYSQL_USER --host=$MYSQL_HOST --password=$MYSQL_PASS --lock-all-tables --default-character-set=$MYSQL_CHARSET --databases ${DB} > ${TARGET}/dump/${DB}_${DD}_${LOG_POSITION}.sql;
+      cd ${TARGET}/dump && $Tar zcpf ${DB}_${DD}_${LOG_POSITION}.tgz ${DB}_${DD}_${LOG_POSITION}.sql && rm ${DB}_${DD}_${LOG_POSITION}.sql;
+
+      done;
+    fi
+
+    ## START SLAVE
+    ${MYSQL_BIN}mysql --user=$MYSQL_USER --host=$MYSQL_HOST --password=$MYSQL_PASS -e 'START SLAVE;'
+   
+    return $?
+}
+
+
+#$1:subject $2:body
+function errorReport(){
+    
+    TEMP=/tmp/backupdb_mail.$$
+    local SUB="mysq_backup.sh Error Report(${1})"
+    local BODY="$2"
+    if [ -z $SENDMAIL ];then
+	echo "$SUB $BODY" >> $TEMP
+	exit;
+    fi
+
+    cat $TMP <<EOF | $SENDMAIL -f"${SYSEMAIL}" -t
+From: ${HOSTNAME}
+To: ${SYSEMAIL}
+Subject: ${SUB} 
+MIME-Version: 1.0
+Content-Type: text/plain; charset="ISO-2022-JP"
+Content-Transfer-Encoding: 7bit
+
+$BODY
+EOF
+    
+}
+
+##main
+renice +20 $$ > /dev/null
+while getopts ":hvzt:d:" opt; do
+    case $opt in
+	h  ) printHelp;
+	    exit;;
+	v  ) printVersion;
+	    exit;;
+	z  ) printValues;;
+	t  ) TARGET=$OPTARG ;;
+	d  ) DATABASES=$OPTARG ;;
+	\? ) echo "iilegal option $1"; printHelp; exit 1 ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+
+##validation
+if [ "$DATABASES" = "" ]; then
+    echo "please specify a target database."
+    exit
+fi
+
+##Exec
+backup_exec
+
+if [ $? != 0 ]; then
+    errorReport "backup failed" "Please check system." 
+fi
