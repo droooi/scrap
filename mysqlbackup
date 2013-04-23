@@ -116,9 +116,8 @@ function printValues() {
 #show version
 function printVersion() {
  printf "
-mysql_backup.sh(mysql data backup) $VERSION
-Author 001@dropsystem
-Copyright (C) 2007 Dropsystem Co.,Ltd.
+mysql_backup(mysql data backup) $VERSION
+Author droooi
 "
 }
 
